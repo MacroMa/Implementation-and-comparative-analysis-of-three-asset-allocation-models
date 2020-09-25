@@ -1,0 +1,430 @@
+---
+title: "Untitled"
+author: "zzh"
+date: "2020年8月20日"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+```{r include=FALSE}
+library(quadprog)
+library(quantmod)
+library(quadprog)
+library(quantmod)
+library(quadprog)
+library(quantmod)
+library(tseries)
+library(tseries)
+library(PerformanceAnalytics)
+library(PerformanceAnalytics)
+```
+
+## 1.分析简介
+
+在本次分析中，我们使用风险平价模型（Risk Parity Portfolio），最小方差模型（Minimum Variance Portfolio）和Black-Litterman Model模型构建了三种资产配置方案，并对每个模型进行了回测。
+
+## 2.数据读取和预处理
+
+下面是基本的数据读入和工具包加载
+
+```{r cars}
+getwd()
+data=read.csv("data.csv")
+data$日期=as.Date(data$日期)
+data_no_date=data[,2:7]
+
+library(quadprog)
+library(quantmod)
+# rm(list = ls())
+
+```
+
+## 3.资产配置模型构建
+
+### 3.1.风险平价模型（Risk Parity Portfolio）
+首先，我们使用风险平价模型（Risk Parity Portfolio）建模一种资产配置方案并回测结果，将资产配置方案存储在Configuration_method1中，将回测结果存储在result1中。
+
+```{r}
+# 风险平价模型（Risk Parity Portfolio）
+earning_rate=data
+for (i in 2:7) {
+  for (j in nrow(data):2) {
+    earning_rate[j,i]=(data[j,i]-data[j-1,i])/data[j-1,i]
+  }
+}
+earning_rate=earning_rate[,2:7]
+earning_rate=earning_rate[-1,]
+# summary(earning_rate)
+RiskParity = function(Sub) #Sub是N行M列的数据，N个日期，M个资产的收益
+{
+  m = ncol(Sub)
+  Cov = matrix(cov(Sub, use = "na.or.complete"), m, m)
+  TotalTRC = function(x)
+  {
+    x = matrix(c(x, 1-sum(x)))
+    TRC = as.vector((Cov %*% x) * x)
+    return(sum(outer(TRC, TRC, "-")^2))
+  }
+  sol = optim(par = rep(1/m,m-1), TotalTRC)
+  w = c(sol$par, 1-sum(sol$par))
+  return(w)
+}
+RiskParity(earning_rate)
+Configuration_method1=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+Configuration_method1[1,]=1/6
+
+for (i in 1:(as.integer(nrow(data)/30)-1)) {
+  temp=RiskParity(earning_rate[((i-1)*30+1):((i-1)*30+30),])
+  Configuration_method1[i+1,1]=sum(Configuration_method1[i,])*temp[1]
+  Configuration_method1[i+1,2]=sum(Configuration_method1[i,])*temp[2]
+  Configuration_method1[i+1,3]=sum(Configuration_method1[i,])*temp[3]
+  Configuration_method1[i+1,4]=sum(Configuration_method1[i,])*temp[4]
+  Configuration_method1[i+1,5]=sum(Configuration_method1[i,])*temp[5]
+  Configuration_method1[i+1,6]=sum(Configuration_method1[i,])*temp[6]
+}
+
+# 去除负值
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method1)) {
+    Configuration_method1[i,j]=Configuration_method1[i,j]-(min(Configuration_method1[i,]))+1e-6
+  } 
+}
+# 回测
+
+result1=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+result1[1,]=1/6
+
+for (i in 2:nrow(result1)) {
+  property_sum=sum(result1[i-1,])
+  rate_sum=sum(Configuration_method1[i,])
+  for (j in 1:6) {
+    result1[i,j]=property_sum*
+      (Configuration_method1[i,j]/rate_sum)*
+      (data_no_date[(i-1)*30+30,j]/data_no_date[(i-1)*30+1,j])
+  }
+}
+
+for (i in 1:nrow(result1)) {
+  result1[i,1]=sum(result1[i,])
+}
+for (i in 2:nrow(result1)) {
+  result1[i,1]=result1[i-1,1]*result1[i,1]
+}
+result1=data.frame(result1[,1])
+```
+
+
+### 3.2.最小方差模型（Minimum Variance Portfolio）
+
+其次，我们使用最小方差模型（Minimum Variance Portfolio）建模一种资产配置方案并回测结果，将资产配置方案存储在Configuration_method2中，将回测结果存储在result2中。
+
+```{r}
+# 最小方差模型（Minimum Variance Portfolio）
+
+earning_rate=data
+for (i in 2:7) {
+  for (j in nrow(data):2) {
+    earning_rate[j,i]=(data[j,i]-data[j-1,i])/data[j-1,i]
+  }
+}
+earning_rate=earning_rate[,2:7]
+earning_rate=earning_rate[-1,]
+
+data_no_date=data[,2:7]
+
+Configuration_method2=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+
+# 先使用Configuration_method2暂存方差列表，并进行标准化
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method2)) {
+    Configuration_method2[i,j]=sd(earning_rate[((i-1)*30+1):((i-1)*30+30),j])
+    # Configuration_method2[i,j]=Configuration_method2[i,j]*Configuration_method2[i,j]
+  }
+  Configuration_method2[,j]=scale(Configuration_method2[,j])
+}
+
+# 计算协方差，存储在6个dataframe中
+Variance_list1=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+Variance_list2=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+Variance_list3=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+Variance_list4=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+Variance_list5=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+Variance_list6=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method2)) {
+    Variance_list1[i,j]=var(earning_rate[((i-1)*30+1):((i-1)*30+30),j],
+                               earning_rate[((i-1)*30+1):((i-1)*30+30),1],)
+  }
+  Variance_list1[,j]=scale(Variance_list1[,j])
+}
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method2)) {
+    Variance_list2[i,j]=var(earning_rate[((i-1)*30+1):((i-1)*30+30),j],
+                            earning_rate[((i-1)*30+1):((i-1)*30+30),2],)
+  }
+  Variance_list2[,j]=scale(Variance_list2[,j])
+}
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method2)) {
+    Variance_list3[i,j]=var(earning_rate[((i-1)*30+1):((i-1)*30+30),j],
+                            earning_rate[((i-1)*30+1):((i-1)*30+30),3],)
+  }
+  Variance_list3[,j]=scale(Variance_list3[,j])
+}
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method2)) {
+    Variance_list4[i,j]=var(earning_rate[((i-1)*30+1):((i-1)*30+30),j],
+                            earning_rate[((i-1)*30+1):((i-1)*30+30),4],)
+  }
+  Variance_list4[,j]=scale(Variance_list4[,j])
+}
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method2)) {
+    Variance_list5[i,j]=var(earning_rate[((i-1)*30+1):((i-1)*30+30),j],
+                            earning_rate[((i-1)*30+1):((i-1)*30+30),5],)
+  }
+  Variance_list5[,j]=scale(Variance_list5[,j])
+}
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method2)) {
+    Variance_list6[i,j]=var(earning_rate[((i-1)*30+1):((i-1)*30+30),j],
+                            earning_rate[((i-1)*30+1):((i-1)*30+30),6],)
+  }
+  Variance_list6[,j]=scale(Variance_list6[,j])
+}
+
+# 协方差的作用是作为方差的约束条件，即满足最小方差规则,此处做该判断
+for (i in 1:6) {
+  for (j in 1:6) {
+    for (k in 1:nrow(Configuration_method2)) {
+      # Configuration_method2[i,j]
+      # get(paste("Variance_list",i,sep = ""))[1,2]
+      if (Configuration_method2[i,j]<get(paste("Variance_list",i,sep = ""))[k,j]) {
+        Configuration_method2[i,j]=get(paste("Variance_list",i,sep = ""))[k,j]
+      }
+    }
+  }
+}
+
+# 规范化资产配置比例，去除负值（因为要转化为资产配置比例）
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method2)) {
+    Configuration_method2[i,j]=Configuration_method2[i,j]-(min(Configuration_method2[i,]))+1e-6
+  } 
+  
+}
+
+# 回测
+# 该过程中，将Configuration_method2理解为下一个投资周期全部资产分配的比例
+# result存储每次投资后的结果
+result2=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+result2[1,]=1/6
+
+for (i in 2:nrow(result2)) {
+  property_sum=sum(result2[i-1,])
+  rate_sum=sum(Configuration_method2[i,])
+  for (j in 1:6) {
+    result2[i,j]=property_sum*
+      (Configuration_method2[i,j]/rate_sum)*
+      (data_no_date[(i-1)*30+30,j]/data_no_date[(i-1)*30+1,j])
+  }
+}
+
+for (i in 1:nrow(result2)) {
+  result2[i,1]=sum(result2[i,])
+}
+result2=data.frame(result2[,1])
+```
+
+### 3.3.Black-Litterman 模型
+
+最后，我们使用Black-Litterman Model建模一种资产配置方案并回测结果，将资产配置方案存储在Configuration_method3中，将回测结果存储在result3中。
+
+```{r}
+
+
+# Black-Litterman Model
+
+
+# 计算风险指数，这里理解为每个投资周期亏空日期占比
+risk=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+for (i in 1:nrow(risk)) {
+  
+  for (j in 1:6) {
+    count=0
+    for (k in 2:30) {
+      if (data_no_date[(i-1)*30+k,j]>data_no_date[(i-1)*30+k-1,j]) {
+        count=count+1
+      }
+    }
+    risk[i,j]=count/30
+  }
+}
+
+# 确定风险水平与主观预期影响下收益最大化的配置策略
+# 主观预期是该模型的重点，这里认为是上期投资的收益率在影响
+# 在实际模型中可能是新闻资讯，关联市场状况等的影响,但此处无法获得这些信息
+Configuration_method3=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+
+for (i in 1:nrow(Configuration_method3)) {
+  for (j in 1:6) {
+    Configuration_method3[i,j]=(data_no_date[(i-1)*30+30,j]-data_no_date[(i-1)*30+1,j])/data_no_date[(i-1)*30+1,j]*risk[i,j]
+  }
+}
+for (j in 1:6) {
+  for (i in 1:nrow(Configuration_method3)) {
+    Configuration_method3[i,j]=Configuration_method3[i,j]-(min(Configuration_method3[i,])+1e-6)
+  } 
+}
+
+# 回测
+result3=data.frame(matrix(ncol = 6,nrow = as.integer(nrow(data)/30)))
+result3[1,]=1/6
+# 同上，将Configuration_method3理解为下一个投资周期全部资产分配的比例
+# result3存储每次投资后的结果
+for (i in 2:nrow(result3)) {
+  
+  property_sum=sum(result3[i-1,])
+  rate_sum=sum(Configuration_method3[i,])
+  for (j in 1:6) {
+    result3[i,j]=property_sum*
+      (Configuration_method3[i,j]/rate_sum)*
+      (data_no_date[(i-1)*30+30,j]/data_no_date[(i-1)*30+1,j])
+  }
+}
+
+for (i in 1:nrow(result3)) {
+  result3[i,1]=sum(result3[i,])
+}
+result3=data.frame(result3[,1])
+
+
+```
+
+## 4.模型的回测
+
+我们使用年化收益，波动率等指标评测每个模型，目标是对模型做出选择。
+
+```{r}
+
+
+# 指标分析与模型选择
+result=data.frame(result1,result2,result3)
+result[1,]=1
+result=result[1:85,]
+colnames(result)=c("M1","M2","M3")
+
+# 年化收益、波动率和夏普比率
+library(PerformanceAnalytics)
+tsdata=ts(result)
+table.AnnualizedReturns(tsdata[,1])
+table.AnnualizedReturns(tsdata[,2])
+table.AnnualizedReturns(tsdata[,3])
+
+
+# 最大回撤
+library(tseries)
+maxdrawdown(tsdata[,1])[1]
+maxdrawdown(tsdata[,2])[1]
+maxdrawdown(tsdata[,3])[1]
+
+# VaR
+method=1
+return=data.frame(matrix(ncol = 3,nrow = as.integer(nrow(data)/30)))
+for(i in 2:(nrow(result)-1)){
+  return[i,method]=diff(result[,method])[i-1]/result[i-1,method]
+}
+return=return[2:84,1]
+VaR1=as.numeric(quantile(-return,0.95,lw=T))
+"VaR1:";VaR1
+
+method=2
+return=data.frame(matrix(ncol = 3,nrow = as.integer(nrow(data)/30)))
+for(i in 2:(nrow(result)-1)){
+  return[i,method]=diff(result[,method])[i-1]/result[i-1,method]
+}
+return=return[2:84,method]
+VaR2=as.numeric(quantile(-return,0.95,lw=T))
+"VaR2:";VaR2
+
+method=3
+return=data.frame(matrix(ncol = 3,nrow = as.integer(nrow(data)/30)))
+for(i in 2:(nrow(result)-1)){
+  return[i,method]=diff(result[,method])[i-1]/result[i-1,method]
+}
+return=return[2:84,method]
+VaR3=as.numeric(quantile(-return,0.95,lw=T))
+"VaR3:";VaR3
+
+# 每月胜率
+winning_rate_Monthly=data.frame(matrix(nrow = 1,ncol = 3))
+colnames(winning_rate_Monthly)=c("Risk Parity Portfolio",
+                                 "Minimum Variance Portfolio",
+                                 "Black-Litterman Model")
+for (i in 1:3) {
+  count=0
+  for (j in 2:nrow(result)) {
+    if (result[j,i]>result[j-1,i]) {
+      count=count+1
+    }
+  }
+  winning_rate_Monthly[1,i]=count/(nrow(result-1))
+}
+
+```
+
+## 5.参数汇总与模型选择
+
+```{r}
+# 变量汇总
+variable_summary=data.frame(matrix(nrow = 3,ncol = 6))
+colnames(variable_summary)=c("年化收益","波动率","夏普比率","最大回撤","VaR","每月胜率")
+rownames(variable_summary)=c("Risk Parity Portfolio",
+                             "Minimum Variance Portfolio",
+                             "Black-Litterman Model")
+
+variable_summary[1,1]=as.numeric(table.AnnualizedReturns(tsdata[,1])[1,1][1])
+variable_summary[2,1]=as.numeric(table.AnnualizedReturns(tsdata[,2])[1,1][1])
+variable_summary[3,1]=as.numeric(table.AnnualizedReturns(tsdata[,3])[1,1][1])
+
+variable_summary[1,2]=as.numeric(table.AnnualizedReturns(tsdata[,1])[2,1][1])
+variable_summary[2,2]=as.numeric(table.AnnualizedReturns(tsdata[,2])[2,1][1])
+variable_summary[3,2]=as.numeric(table.AnnualizedReturns(tsdata[,3])[2,1][1])
+
+variable_summary[1,3]=as.numeric(table.AnnualizedReturns(tsdata[,1])[3,1][1])
+variable_summary[2,3]=as.numeric(table.AnnualizedReturns(tsdata[,2])[3,1][1])
+variable_summary[3,3]=as.numeric(table.AnnualizedReturns(tsdata[,3])[3,1][1])
+
+variable_summary[1,4]=as.numeric(maxdrawdown(tsdata[,1])[1])
+variable_summary[2,4]=as.numeric(maxdrawdown(tsdata[,2])[1])
+variable_summary[3,4]=as.numeric(maxdrawdown(tsdata[,3])[1])
+
+variable_summary[1,5]=VaR1
+variable_summary[2,5]=VaR2
+variable_summary[3,5]=VaR3
+
+variable_summary[1,6]=winning_rate_Monthly[1,1]
+variable_summary[2,6]=winning_rate_Monthly[1,2]
+variable_summary[3,6]=winning_rate_Monthly[1,3]
+
+head(variable_summary)
+```
+
+
+首先，资产配置最重要的指标无疑是年化收益，我们可以看到Black-Litterman Model方法的年化收益居于高位，Minimum Variance Portfolio方法居于中位,Risk Parity Portfolio方法的年化收益最低，最高者与后面两者差异较大，我们推测这可能是因为前两种方法会倾向于投资较为稳健的资产，因此在经济上行期的收益并不出众。
+
+波动率是衡量该资产配置稳定性的重要因素，可以看到，Risk Parity Portfolio方法和Black-Litterman Model方法的波动率有一定差距，并显著高于Minimum Variance Portfolio方法的波动率。
+
+夏普比率视角下，Minimum Variance Portfolio方法的夏普比率居于首位，说明结合收益与风险而这看来，Minimum Variance Portfolio方法做出的资产配置情况是最值得投资的，其他两种方法的夏普比率明显低于Minimum Variance Portfolio方法，因此该方法可能是一种能很好地规避投资风险的资产配置方法。
+
+结合最大回撤和VaR两种主要衡量投资风险的视角，我们发现三种方法的在这两个角度上的表现较为接近，其中Minimum Variance Portfolio方法和Risk Parity Portfolio方法相对来说表现较好，这也可能受益于两者稳健投资的特性。
+
+Black-Litterman Model方法的每月胜率显著大于其他两种方法，这可能是由于该方法在分析中会同时考虑风险和现有投资收益带来的主观信心对资产配置的影响。
+
+综合来看，显而易见Black-Litterman Model方法由于其很高的年化收益将成为我们的首选方法，被用来进行给定资产变化情况下的资产配置，其年化收益最高，波动率略高于Risk Parity Portfolio方法，这种配置方式具有一定风险，但每月胜率高，能给资产持有者持续的信心，这也将持续帮助其获得正收益。
+
